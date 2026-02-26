@@ -52,12 +52,21 @@ def parse_uploaded_csv(uploaded_file):
         if not row or not any(cell.strip() for cell in row):
             continue
         key = None
-        for cell in row:
-            key = extract_key(cell.strip(), "SMPR")
-            if key:
+        title = ""
+        key_idx = -1
+        for i, cell in enumerate(row):
+            found = extract_key(cell.strip(), "SMPR")
+            if found:
+                key = found
+                key_idx = i
                 break
         if key:
-            porotos.append({"key": key})
+            for i, cell in enumerate(row):
+                val = cell.strip()
+                if i != key_idx and val and not val.startswith("http") and "SMPR-" not in val and len(val) > 5:
+                    title = val
+                    break
+            porotos.append({"key": key, "title": title})
     return porotos
 
 
@@ -179,10 +188,14 @@ def run_classification(porotos, creds):
                 st.warning(f"Jira no encontró {porotos[0]['key']}. Verificá credenciales.")
                 jira = None
         except Exception as e:
-            st.error(f"Error conectando a Jira: {e}")
+            st.warning(f"Jira no disponible ({e}). Usando títulos del CSV.")
             jira = None
     else:
-        st.warning("Sin credenciales de Jira. Clasificando solo por título del CSV (menos preciso).")
+        has_titles = any(p.get("title") for p in porotos)
+        if has_titles:
+            st.info("Sin Jira. Usando títulos del CSV para clasificar.")
+        else:
+            st.error("Sin Jira y el CSV no tiene títulos. Agregá una columna con los títulos de los porotos.")
 
     results = []
     total = len(porotos)
@@ -194,7 +207,7 @@ def run_classification(porotos, creds):
 
     for i, poroto in enumerate(porotos):
         key = poroto["key"]
-        title = ""
+        title = poroto.get("title", "")
         description = ""
         labels = []
         components = []
@@ -217,7 +230,7 @@ def run_classification(porotos, creds):
             for field in OUTPUT_FIELDS:
                 row[field] = ""
             row["ANTIGUEDAD"] = "ERROR"
-            row["JUSTIFICACION"] = "No se pudo obtener info del ticket desde Jira"
+            row["JUSTIFICACION"] = "No se pudo obtener info del ticket (sin Jira ni titulo en CSV)"
             results.append(row)
         else:
             result = classifier.classify(key, title, description, labels, components)
@@ -309,7 +322,8 @@ def main():
         st.error("No se encontraron IDs de porotos (SMPR-XXXXX) en el archivo.")
         return
 
-    st.success(f"Se encontraron **{len(porotos)}** porotos en el archivo.")
+    titles_count = sum(1 for p in porotos if p.get("title"))
+    st.success(f"Se encontraron **{len(porotos)}** porotos en el archivo ({titles_count} con título).")
 
     col1, col2 = st.columns([1, 2])
     with col1:
