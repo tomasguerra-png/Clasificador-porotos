@@ -167,11 +167,26 @@ def run_classification(porotos, creds):
     st.caption(f"Modelo: **{classifier.provider_name}**")
 
     jira = None
+    jira_ok = False
     if creds.get("jira_email") and creds.get("jira_token"):
         jira = JiraClient(creds["jira_url"], creds["jira_email"], creds["jira_token"])
+        try:
+            test = jira.get_issue(porotos[0]["key"])
+            if test:
+                jira_ok = True
+                st.success(f"Jira conectado OK - probado con {porotos[0]['key']}")
+            else:
+                st.warning(f"Jira no encontró {porotos[0]['key']}. Verificá credenciales.")
+                jira = None
+        except Exception as e:
+            st.error(f"Error conectando a Jira: {e}")
+            jira = None
+    else:
+        st.warning("Sin credenciales de Jira. Clasificando solo por título del CSV (menos preciso).")
 
     results = []
     total = len(porotos)
+    jira_errors = 0
     progress_bar = st.progress(0, text=f"Clasificando 0/{total}...")
     status_text = st.empty()
     results_container = st.empty()
@@ -192,14 +207,24 @@ def run_classification(porotos, creds):
                     description = details["description"]
                     labels = details["labels"]
                     components = details["components"]
+                else:
+                    jira_errors += 1
             except Exception:
-                pass
+                jira_errors += 1
 
-        result = classifier.classify(key, title, description, labels, components)
-        row = {"key": key, "title": title}
-        for field in OUTPUT_FIELDS:
-            row[field] = result.get(field, "")
-        results.append(row)
+        if not title:
+            row = {"key": key, "title": ""}
+            for field in OUTPUT_FIELDS:
+                row[field] = ""
+            row["ANTIGUEDAD"] = "ERROR"
+            row["JUSTIFICACION"] = "No se pudo obtener info del ticket desde Jira"
+            results.append(row)
+        else:
+            result = classifier.classify(key, title, description, labels, components)
+            row = {"key": key, "title": title}
+            for field in OUTPUT_FIELDS:
+                row[field] = result.get(field, "")
+            results.append(row)
 
         done = i + 1
         elapsed = time.time() - start_time
@@ -219,6 +244,8 @@ def run_classification(porotos, creds):
 
     progress_bar.progress(1.0, text=f"✅ Listo: {total}/{total} clasificados en {elapsed:.0f}s")
     status_text.empty()
+    if jira_errors > 0:
+        st.warning(f"⚠️ {jira_errors} tickets no se pudieron leer de Jira. Verificá las credenciales en el sidebar.")
     return results
 
 
